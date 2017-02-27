@@ -1,0 +1,156 @@
+A原理：将3D物体从识别目标下移出，不在将识别图作为3D物体的父对象，从而实现模型不跟随识别物体的效果。——用于动态加载模型的处理
+
+方式一：在ARCamera下创建一个空物体作为脱离之后模型的目标位置，然后在脱离识别图将模型移动到该空物体下；也可以将模型脱离后，移动ARCamera的位置和旋转（貌似不适合多物体识别的情况）
+      
+    //获取ARCamera下的空物体
+    public Transform targetTransfom;
+    //在识别丢失时做处理
+    private void OnTrackingLost()
+    {
+        if (transform.childCount != 0)
+        {       
+             transform.GetChild(0).parent = targetTransfom;            
+        }
+    }
+
+
+    //或者
+    private void OnTrackingLost()
+    {
+        if (transform.childCount != 0)
+        {       
+             //设置相机ARCamera的位置和旋转        
+        }
+    }
+ 
+           
+
+方式二：将脱卡的模型用一个新的camera来渲染，也就是说脱离识别图之后的物体是完全在另一个camera坐标系下的。
+
+①给模型挂在一个脚本方便做识别public class TrackObject : MonoBehaviour{public Vector3 lostPostion;}
+②添加一个新的layer，比如第10层，设为OnShow
+③新建的Camera：
+a.    Depth要高于ARCamera下的camera，这样才能不会被遮挡
+b.    Clear  Flags要选 Depth Only
+c.    Culling Mask只选择新添加的层 OnShow
+④模型脱卡后移动到新建的Camera渲染到的合适位置，并且将其设置其层级，gameObjective.layer=10
+
+   private void OnTrackingFound()
+    {
+        //识别到物体时，检查当前是否有脱卡的物体，有则销毁
+        TrackObject[] objs = FindObjectsOfType<TrackObject>();
+        if (objs.Length != 0)
+        {
+            for (int i = objs.Length - 1; i >= 0; i--)
+            {
+                Destroy(objs[i].gameObject);
+            }
+            //卸载无用资源
+            Resources.UnloadUnusedAssets();
+        }
+
+        //加载新的模型
+        GameObject obj = GameObject.Instantiate(Resources.Load(objName)) as GameObject;
+        obj.transform.parent = this.transform;
+
+    }
+
+    private void OnTrackingLost()
+    {
+        TrackObject to = GetComponentInChildren<TrackObject>();
+
+        if (to != null)
+        {
+            //将3D物体从父对象（识别目标）下移出
+            to.transform.parent = this.transform.parent;
+            //设置物体的layer，以便让新的camera来渲染
+            to.gameObject.layer = 10;
+            //设置脱卡位置为TrackObject中设好的位置
+            to.transform.position = to.lostPosition;
+        }
+    }
+        
+
+B原理：用一个list（多目标）/变量currentModel（单目标）来记录当前是否有脱卡的模型，在识别丢失时如果脱卡的模型已经有记录则不禁用Collider和Randerer，也可以达到脱卡的目的——用于每个ImageTarget下做好了识别模型的情况
+
+① 识别时，对list/currentModel检查，如果有脱卡模型，则禁用其Collider和Renderer，即隐藏，
+② 脱卡时需要设定相机位置
+PS：模型位置永远不动，只是改变ARCamera位置（貌似不太适合多目标识别的情况） 
+        if (currentModel != null)
+        {    
+             Renderer[] rendererComponents = currentModel.GetComponentsInChildren<Renderer>(true);
+            Collider[] colliderComponents = currentModel.GetComponentsInChildren<Collider>(true);
+            // Disable rendering:
+            foreach (Renderer component in rendererComponents)
+            {
+                component.enabled = false;
+            }
+            // Disable colliders:
+            foreach (Collider component in colliderComponents)
+            {
+                component.enabled = false;
+            }   
+            currentModel = null;
+        } 
+
+
+        private void OnTrackingFound()
+        {
+            if (ModelInteraction.GetInstance.currentModel != null)
+            {
+                ModelInteraction.GetInstance.ClearModel();
+                ARCameraTrack.GetInstance.SetCameraTransform();
+                UIMananger.GetInstance.ResetSoundImg();
+            }
+
+            Renderer[] rendererComponents = GetComponentsInChildren<Renderer>(true);
+            Collider[] colliderComponents = GetComponentsInChildren<Collider>(true);
+
+            // Enable rendering:
+            foreach (Renderer component in rendererComponents)
+            {
+                component.enabled = true;
+            }
+
+            // Enable colliders:
+            foreach (Collider component in colliderComponents)
+            {
+                component.enabled = true;
+            }
+
+            Debug.Log("Trackable " + mTrackableBehaviour.TrackableName + " found");
+
+            //ModelInteraction.Instance.currentModel记录当前已识别的模型
+            ModelInteraction.GetInstance.currentModel = gameObject.GetComponentInChildren<BoxCollider>().gameObject;
+            //播放声音
+            AudioManager.GetInstance.ModelAudioPlay(ModelInteraction.GetInstance.currentModel.name);
+        }
+
+
+        private void OnTrackingLost()
+        {
+            //如果当前显示的模型是该模型则不隐藏，否则隐藏
+            if (ModelInteraction.GetInstance.currentModel == transform.GetChild(0).gameObject)
+            {
+                ARCameraTrack.GetInstance.SetCameraTransform();
+                return;
+            }
+
+            Renderer[] rendererComponents = GetComponentsInChildren<Renderer>(true);
+            Collider[] colliderComponents = GetComponentsInChildren<Collider>(true);
+
+            // Disable rendering:
+            foreach (Renderer component in rendererComponents)
+            {
+                component.enabled = false;
+            }
+
+            // Disable colliders:
+            foreach (Collider component in colliderComponents)
+            {
+                component.enabled = false;
+            }
+
+            Debug.Log("Trackable " + mTrackableBehaviour.TrackableName + " lost");
+        } 
+            
